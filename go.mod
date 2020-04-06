@@ -7,10 +7,14 @@ require (
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/lightninglabs/loop v0.2.4-alpha
 	github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d
-	github.com/lightningnetwork/lnd v0.8.0-beta-rc3.0.20191025122959-1a0ab538d53c
+	github.com/lightningnetwork/lnd v0.9.0-beta-rc3.0.20200121213302-a2977c4438b5
 	github.com/urfave/cli v1.20.0
-	google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
+	google.golang.org/genproto v0.0.0-20190927181202-20e1ac93f88c
 	google.golang.org/grpc v1.27.0
 )
+
+replace github.com/lightninglabs/loop => /Users/carla/go/src/github.com/lightninglabs/loop
+
+replace github.com/lightningnetwork/lnd => /Users/carla/go/src/github.com/lightningnetwork/lnd
 
 go 1.13

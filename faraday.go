@@ -30,10 +30,21 @@ func Main() error {
 			err)
 	}
 
+	services, err := lndclient.NewLndServices(
+		config.RPCServer,
+		config.network,
+		config.MacaroonDir,
+		config.TLSCertPath,
+	)
+	if err != nil {
+		return fmt.Errorf("cannot connect to services: %v", err)
+	}
+
 	// Instantiate the faraday gRPC server.
 	server := frdrpc.NewRPCServer(
 		&frdrpc.Config{
 			LightningClient: client,
+			GRPCServices:    services,
 			RPCListen:       config.RPCListen,
 		},
 	)

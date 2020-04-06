@@ -12,6 +12,7 @@ package frdrpc
 import (
 	"context"
 	"fmt"
+	"github.com/lightninglabs/loop/lndclient"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,9 @@ type RPCServer struct {
 type Config struct {
 	// LightningClient is a client which can be used to query lnd.
 	LightningClient lnrpc.LightningClient
+
+	// GRPCServices returns a wrapper for lnd's subservers.
+	GRPCServices *lndclient.GrpcLndServices
 
 	// RPCListen is the address:port that the rpc server should listen
 	// on.
