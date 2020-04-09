@@ -126,6 +126,9 @@ func TestGetChannels(t *testing.T) {
 					return test.currentHeight, nil
 				},
 				RevenueReport: test.revenue,
+				FailureRatio: func(id uint64) (f float64, err error) {
+					return 0, nil
+				},
 			})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

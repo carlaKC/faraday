@@ -6,6 +6,7 @@ import (
 	"github.com/lightninglabs/faraday/frdrpc"
 	"github.com/lightninglabs/faraday/recommend"
 	"github.com/lightninglabs/faraday/revenue"
+	"github.com/lightninglabs/faraday/routing"
 	"github.com/lightningnetwork/lnd/build"
 )
 
@@ -28,6 +29,7 @@ func init() {
 	addSubLogger(dataset.Subsystem, dataset.UseLogger)
 	addSubLogger(frdrpc.Subsystem, frdrpc.UseLogger)
 	addSubLogger(revenue.Subsystem, revenue.UseLogger)
+	addSubLogger(routing.Subsystem, routing.UseLogger)
 }
 
 // UseLogger uses a specified Logger to output package logging info.

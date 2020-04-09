@@ -12,14 +12,17 @@ package frdrpc
 import (
 	"context"
 	"fmt"
-	"github.com/lightninglabs/loop/lndclient"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lightninglabs/faraday/recommend"
 	"github.com/lightninglabs/faraday/revenue"
+	"github.com/lightninglabs/faraday/routing"
+	"github.com/lightninglabs/loop/lndclient"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"google.golang.org/grpc"
 )
 
@@ -52,6 +55,9 @@ type Config struct {
 	// GRPCServices returns a wrapper for lnd's subservers.
 	GRPCServices *lndclient.GrpcLndServices
 
+	// Routing provides routing level monitoring.
+	RoutingMonitor routing.Monitor
+
 	// RPCListen is the address:port that the rpc server should listen
 	// on.
 	RPCListen string
@@ -74,6 +80,18 @@ func (c *Config) wrapListChannels(ctx context.Context,
 		}
 
 		return resp.Channels, nil
+	}
+}
+
+func (c *Config) wrapFailureRatio() func(id uint64) (float64, error) {
+	log.Info("wrapFailureRatio")
+	return func(id uint64) (f float64, err error) {
+		end := time.Now()
+		start := end.Add(time.Hour * 24 * 7 * -1)
+
+		return c.RoutingMonitor.FailureRatio(
+			start, end, lnwire.ShortChannelID{}, false,
+		)
 	}
 }
 

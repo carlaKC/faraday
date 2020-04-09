@@ -245,4 +245,10 @@ message ChannelInsight {
 
     // True if the channel is private.
     bool private = 8;
+
+    /*
+    The ratio of htlc failures to total htlcs processed by the channel. This
+    value excludes our own sends an receives.
+    */
+    float failure_ratio =9;
 }

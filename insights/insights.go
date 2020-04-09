@@ -40,6 +40,10 @@ type ChannelInfo struct {
 
 	// Private indicates whether the channel is private.
 	Private bool
+
+	// FailureRatio is the ratio of htlc failures to total htlcs processed
+	// by this channel. This value excludes our own htlc sends and receives.
+	FailureRatio float64
 }
 
 // Config provides insights with everything it needs to obtain channel
@@ -55,6 +59,9 @@ type Config struct {
 
 	// RevenueReport is a report our channels revenue.
 	RevenueReport *revenue.Report
+
+	// FailureRatio returns the failure ratio for
+	FailureRatio func(id uint64) (float64, error)
 }
 
 // GetChannels returns an array of channel insights.
@@ -95,6 +102,13 @@ func GetChannels(cfg *Config) ([]*ChannelInfo, error) {
 			Confirmations: confirmations,
 			Private:       channel.Private,
 		}
+
+		// Get the failure ratio for this channel.
+		failureRatio, err := cfg.FailureRatio(channel.ChanId)
+		if err != nil {
+			return nil, err
+		}
+		channelInsight.FailureRatio = failureRatio
 
 		// If the channel is not present in the revenue report, it has
 		// not generated any revenue over the period so we can add it

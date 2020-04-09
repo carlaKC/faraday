@@ -24,20 +24,23 @@ func channelInsights(ctx context.Context,
 		return nil, err
 	}
 
-	return insights.GetChannels(&insights.Config{
-		OpenChannels: cfg.wrapListChannels(ctx, false),
-		CurrentHeight: func() (u uint32, err error) {
-			info, err := cfg.LightningClient.GetInfo(
-				ctx, &lnrpc.GetInfoRequest{},
-			)
-			if err != nil {
-				return 0, err
-			}
+	return insights.GetChannels(
+		&insights.Config{
+			OpenChannels: cfg.wrapListChannels(ctx, false),
+			CurrentHeight: func() (u uint32, err error) {
+				info, err := cfg.LightningClient.GetInfo(
+					ctx, &lnrpc.GetInfoRequest{},
+				)
+				if err != nil {
+					return 0, err
+				}
 
-			return info.BlockHeight, nil
-		},
-		RevenueReport: report,
-	})
+				return info.BlockHeight, nil
+			},
+			RevenueReport: report,
+			// TODO(carla): add times or something??
+			FailureRatio: cfg.wrapFailureRatio(),
+		})
 }
 
 func rpcChannelInsightsResponse(
@@ -55,6 +58,7 @@ func rpcChannelInsightsResponse(
 			FeesEarnedMsat:     int64(i.FeesEarned),
 			Confirmations:      i.Confirmations,
 			Private:            i.Private,
+			FailureRatio:       float32(i.FailureRatio),
 		}
 
 		rpcInsights = append(rpcInsights, insight)
