@@ -2,7 +2,10 @@ package faraday
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/lightningnetwork/lnd/routing/route"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/lightningnetwork/lnd/build"
@@ -54,6 +57,18 @@ type Config struct {
 
 	// CORSOrigin specifies the CORS header that should be set on REST responses. No header is added if the value is empty.
 	CORSOrigin string `long:"corsorigin" description:"The value to send in the Access-Control-Allow-Origin header. Header will be omitted if empty."`
+
+	// PeerAcceptList is a set of peers that we will accept channel opens from, mutually exclusive with PeerRejectList.
+	PeerAcceptList string `long:"peer_accept" description:"The set of peer pubkeys (separated by commas) that we will accept channel opens from. Be mindful that if set, your node will *only* accept channels from these peers. Note this cannot be used if peer_reject is set."`
+
+	// PeerRejectList a set of peers we won't accept channel opens from, mutually exclusive with PeerAcceptList.
+	PeerRejectList string `long:"peer_reject" description:"A list of peer pubkeys (separated by commas) that we will reject channel opens from. Note this cannot be used if peer_accept is set."`
+
+	// acceptPeers contains the peers from PeerAcceptList.
+	acceptPeers []route.Vertex
+
+	// rejectPeers contains the peers from PeerRejectList.
+	rejectPeers []route.Vertex
 }
 
 // DefaultConfig returns all default values for the Config struct.
@@ -100,6 +115,41 @@ func LoadConfig() (*Config, error) {
 
 	if err := build.ParseAndSetDebugLevels(config.DebugLevel, logWriter); err != nil {
 		return nil, err
+	}
+
+	if config.PeerAcceptList != "" {
+		accept := strings.Split(config.PeerAcceptList, ",")
+
+		for _, peer := range accept {
+			vertex, err := route.NewVertexFromStr(peer)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse "+
+					"accept peer pubkey: %v: %v", peer, err)
+			}
+
+			config.acceptPeers = append(config.acceptPeers, vertex)
+		}
+	}
+
+	if config.PeerRejectList != "" {
+		reject := strings.Split(config.PeerRejectList, ",")
+
+		for _, peer := range reject {
+			vertex, err := route.NewVertexFromStr(peer)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse "+
+					"reject peer pubkey: %v: %v", peer, err)
+			}
+
+			config.rejectPeers = append(config.rejectPeers, vertex)
+		}
+	}
+
+	// Do not allow setting of accept and reject lists.
+	if len(config.acceptPeers) > 0 && len(config.rejectPeers) > 0 {
+		return nil, fmt.Errorf("cannot set %v peer_reject and "+
+			"%v peer_accept, pick one", len(config.acceptPeers),
+			len(config.rejectPeers))
 	}
 
 	return &config, nil

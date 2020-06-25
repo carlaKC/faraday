@@ -4,10 +4,44 @@ package faraday
 import (
 	"fmt"
 
+	"github.com/lightninglabs/faraday/acceptor"
+
 	"github.com/lightninglabs/faraday/frdrpc"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/signal"
 )
+
+type Server struct {
+	rpcServer *frdrpc.RPCServer
+	acceptor  *acceptor.ChannelAcceptor
+	quit      chan struct{}
+}
+
+// NewServer c
+func NewServer(rpcServer *frdrpc.RPCServer,
+	acceptor *acceptor.ChannelAcceptor) *Server {
+
+	return &Server{
+		rpcServer: rpcServer,
+		acceptor:  acceptor,
+		quit:      make(chan struct{}),
+	}
+}
+
+func (s *Server) Start() error {
+	// If we have a channel acceptor, start it.
+	if s.acceptor != nil {
+		if err := s.acceptor.Start(); err != nil {
+			return err
+		}
+	}
+
+	return s.rpcServer.Start()
+}
+
+func (s *Server) Stop() error {
+	return s.rpcServer.Stop()
+}
 
 // Main is the real entry point for faraday. It is required to ensure that
 // defers are properly executed when os.Exit() is called.
@@ -35,7 +69,7 @@ func Main() error {
 	defer client.Close()
 
 	// Instantiate the faraday gRPC server.
-	server := frdrpc.NewRPCServer(
+	rpcServer := frdrpc.NewRPCServer(
 		&frdrpc.Config{
 			Lnd:        client.LndServices,
 			RPCListen:  config.RPCListen,
@@ -43,6 +77,19 @@ func Main() error {
 			CORSOrigin: config.CORSOrigin,
 		},
 	)
+
+	// If we have a channel acceptor set, then we create one.
+	var chanAccept *acceptor.ChannelAcceptor
+
+	if len(config.rejectPeers) > 0 || len(config.acceptPeers) > 0 {
+		chanAccept = &acceptor.ChannelAcceptor{
+			Accept:      client.Client.ChannelAcceptor,
+			AcceptPeers: config.acceptPeers,
+			RejectPeers: config.rejectPeers,
+		}
+	}
+
+	server := NewServer(rpcServer, chanAccept)
 
 	// Catch intercept signals, then start the server.
 	signal.Intercept()

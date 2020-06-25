@@ -11,6 +11,7 @@ require (
 	github.com/lightninglabs/lndclient v1.0.0
 	github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d
 	github.com/lightningnetwork/lnd v0.10.0-beta.rc6.0.20200615174244-103c59a4889f
+	github.com/prometheus/common v0.4.0
 	github.com/shopspring/decimal v1.2.0
 	github.com/stretchr/testify v1.5.1
 	github.com/urfave/cli v1.20.0
@@ -21,3 +22,7 @@ require (
 )
 
 go 1.13
+
+replace github.com/lightninglabs/lndclient => /Users/carla/go/src/github.com/lightninglabs/lndclient
+
+replace github.com/lightningnetwork/lnd => /Users/carla/go/src/github.com/lightningnetwork/lnd
