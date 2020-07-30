@@ -4,6 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/lightninglabs/faraday/fees"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcutil"
 	"github.com/lightninglabs/faraday/fiat"
 	"github.com/lightninglabs/faraday/lndwrap"
 	"github.com/lightninglabs/lndclient"
@@ -53,7 +57,14 @@ type OnChainConfig struct {
 	// ListSweeps returns the transaction ids of the list of sweeps known
 	// to lnd.
 	ListSweeps func() ([]string, error)
+
+	// GetFee gets the total fees for a transaction.
+	GetFee getFeeFunc
 }
+
+// getFeeFunc is the signature used for functions which can lookup fees for a
+// transaction.
+type getFeeFunc func(chainhash.Hash) (btcutil.Amount, error)
 
 // CommonConfig contains the items that are common to both types of requests.
 type CommonConfig struct {
@@ -77,7 +88,7 @@ type CommonConfig struct {
 
 // NewOnChainConfig returns an on chain config from the lnd services provided.
 func NewOnChainConfig(ctx context.Context, lnd lndclient.LndServices, startTime,
-	endTime time.Time, disableFiat bool,
+	endTime time.Time, disableFiat bool, txLookup fees.GetDetailsFunc,
 	granularity fiat.Granularity) *OnChainConfig {
 
 	return &OnChainConfig{
@@ -98,6 +109,9 @@ func NewOnChainConfig(ctx context.Context, lnd lndclient.LndServices, startTime,
 			EndTime:     endTime,
 			DisableFiat: disableFiat,
 			Granularity: granularity,
+		},
+		GetFee: func(txid chainhash.Hash) (btcutil.Amount, error) {
+			return fees.CalculateFee(txLookup, &txid)
 		},
 	}
 }

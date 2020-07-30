@@ -1,15 +1,27 @@
 package accounting
 
 import (
+	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/lightningnetwork/lnd/routing/route"
 
 	"github.com/btcsuite/btcutil"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
+)
+
+var (
+	// ErrUnknownInitiator is returned when we do not know the channel
+	// initiator for a closed channel. This is only expected to occur for
+	// channels that were closed by lnd versions < 0.9, which we do not
+	// support.
+	ErrUnknownInitiator = errors.New("channel initiator unknown")
+
+	// ErrChannelCloseFee is returned if we get a channel closed with a
+	// non-zero fee, this is unexpected with lnd's current wallet.
+	ErrChannelCloseFee = errors.New("expected zero fee for channel close")
 )
 
 // feeReference returns a special unique reference for the fee paid on a
@@ -139,7 +151,8 @@ func channelCloseNote(channelID uint64, closeType, initiated string) string {
 // it is excluding htlcs that are resolved on chain, and will not reflect our
 // balance when we force close (because it is behind a timelock).
 func closedChannelEntries(channel lndclient.ClosedChannel,
-	tx lndclient.Transaction, convert usdPrice) ([]*HarmonyEntry, error) {
+	tx lndclient.Transaction, getFee getFeeFunc,
+	convert usdPrice) ([]*HarmonyEntry, error) {
 
 	amtMsat := satsToMsat(tx.Amount)
 	note := channelCloseNote(
@@ -156,9 +169,40 @@ func closedChannelEntries(channel lndclient.ClosedChannel,
 		return nil, err
 	}
 
-	// TODO(carla): add channel close fee entry.
+	switch channel.OpenInitiator {
+	// If the remote party opened the channel, we can just return the
+	// channel close as is, because we did not pay fees for it.
+	case lndclient.InitiatorRemote:
+		return []*HarmonyEntry{closeEntry}, nil
 
-	return []*HarmonyEntry{closeEntry}, nil
+	// If we originally opened the channel, we continue to create a fee
+	// entry.
+	case lndclient.InitiatorLocal:
+
+	// If we do not know who opened the channel, we fail.
+	default:
+		return nil, ErrUnknownInitiator
+	}
+
+	fees, err := getFee(tx.Tx.TxHash())
+	if err != nil {
+		return nil, err
+	}
+
+	// Our fees are provided as a positive amount in sats. Convert this to
+	// a negative msat value.
+	feeAmt := invertedSatsToMsats(fees)
+
+	feeEntry, err := newHarmonyEntry(
+		tx.Timestamp, feeAmt, EntryTypeChannelCloseFee,
+		channel.ClosingTxHash, feeReference(channel.ClosingTxHash), "",
+		true, convert,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*HarmonyEntry{closeEntry, feeEntry}, nil
 }
 
 // onChainEntries produces relevant entries for an on chain transaction.

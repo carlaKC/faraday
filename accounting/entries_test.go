@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+
 	"github.com/btcsuite/btcutil"
 	"github.com/lightninglabs/faraday/fiat"
 	"github.com/lightninglabs/lndclient"
@@ -65,6 +69,7 @@ var (
 		// Total fees for closes will always reflect as 0 because they
 		// come from the 2-2 multisig funding output.
 		Fee: 0,
+		Tx:  &wire.MsgTx{},
 	}
 
 	onChainTxID      = "e75760156b04234535e6170f152697de28b73917c69dda53c60baabdae571457"
@@ -162,11 +167,18 @@ var (
 		Timestamp: mockPriceTimestamp,
 		Price:     decimal.NewFromInt(100000),
 	}
+
+	mockFeeSats = btcutil.Amount(220)
+	mockFeeMsat = lnwire.MilliSatoshi(satsToMsat(mockFeeSats))
 )
 
 // mockPrice is a mocked price function which returns mockPrice * amount.
 func mockPrice(_ time.Time) (*fiat.USDPrice, error) {
 	return mockBTCPrice, nil
+}
+
+func mockFee(_ chainhash.Hash) (btcutil.Amount, error) {
+	return mockFeeSats, nil
 }
 
 // TestChannelOpenEntry tests creation of entries for locally and remotely
@@ -303,20 +315,51 @@ func TestChannelCloseEntry(t *testing.T) {
 		}
 	}
 
+	feeEntry := &HarmonyEntry{
+		Timestamp: closeTimestamp,
+		Amount:    mockFeeMsat,
+		FiatValue: fiat.MsatToUSD(mockBTCPrice.Price, mockFeeMsat),
+		TxID:      closeTx,
+		Reference: feeReference(closeTx),
+		Note:      "",
+		Type:      EntryTypeChannelCloseFee,
+		OnChain:   true,
+		Credit:    false,
+		BTCPrice:  mockBTCPrice,
+	}
+
 	tests := []struct {
-		name      string
-		closeType lndclient.CloseType
-		closeAmt  btcutil.Amount
+		name          string
+		closeType     lndclient.CloseType
+		openInitiator lndclient.Initiator
+		closeTxFee    btcutil.Amount
+		closeAmt      btcutil.Amount
+		err           error
 	}{
 		{
-			name:      "coop close, has balance",
-			closeType: lndclient.CloseTypeCooperative,
-			closeAmt:  closeBalanceSat,
+			name:          "coop close, has balance",
+			closeType:     lndclient.CloseTypeCooperative,
+			openInitiator: lndclient.InitiatorLocal,
+			closeAmt:      closeBalanceSat,
+			err:           nil,
 		},
 		{
-			name:      "force close, has no balance",
-			closeType: lndclient.CloseTypeLocalForce,
-			closeAmt:  0,
+			name:          "force close, has no balance",
+			closeType:     lndclient.CloseTypeLocalForce,
+			openInitiator: lndclient.InitiatorLocal,
+			closeAmt:      0,
+			err:           nil,
+		},
+		{
+			name:          "unknown initiator",
+			openInitiator: lndclient.InitiatorUnrecorded,
+			err:           ErrUnknownInitiator,
+		},
+		{
+			name:          "non-zero fee",
+			openInitiator: lndclient.InitiatorRemote,
+			closeTxFee:    1,
+			err:           ErrChannelCloseFee,
 		},
 	}
 
@@ -327,21 +370,37 @@ func TestChannelCloseEntry(t *testing.T) {
 			// Make copies of the global vars so we can change some
 			// fields.
 			closeChan := channelClose
-			closeTx := channelCloseTx
-
 			closeChan.CloseType = test.closeType
+			closeChan.OpenInitiator = test.openInitiator
+
+			closeTx := channelCloseTx
 			closeTx.Amount = test.closeAmt
+			closeTx.Fee = test.closeTxFee
 
 			entries, err := closedChannelEntries(
-				closeChan, closeTx, mockPrice,
+				closeChan, closeTx, mockFee, mockPrice,
 			)
-			require.NoError(t, err)
+			require.Equal(t, test.err, err)
 
-			expected := []*HarmonyEntry{getCloseEntry(
+			// If our error is non-nil, do not proceed to check our
+			// entries.
+			if err != nil {
+				return
+			}
+
+			closeEntry := getCloseEntry(
 				test.closeType.String(),
 				closeChan.CloseInitiator.String(),
 				test.closeAmt,
-			)}
+			)
+
+			expected := []*HarmonyEntry{closeEntry}
+
+			// If we opened the channel, we also expect to have a
+			// fee entry.
+			if test.openInitiator == lndclient.InitiatorLocal {
+				expected = append(expected, feeEntry)
+			}
 
 			require.Equal(t, expected, entries)
 		})
