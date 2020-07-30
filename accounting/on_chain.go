@@ -178,9 +178,8 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		return nil, err
 	}
 
-	isSweep := make(map[string]bool, len(sweeps))
 	for _, sweep := range sweeps {
-		isSweep[sweep] = true
+		info.sweeps[sweep] = true
 	}
 
 	return onChainReport(info)
