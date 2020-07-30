@@ -22,6 +22,10 @@ var (
 	// ErrChannelCloseFee is returned if we get a channel closed with a
 	// non-zero fee, this is unexpected with lnd's current wallet.
 	ErrChannelCloseFee = errors.New("expected zero fee for channel close")
+
+	// ErrSweepFee is returned if we get a sweep with a non-zero fee, this
+	// is unexpected with lnd's current wallet.
+	ErrSweepFee = errors.New("expected zero fee for sweep")
 )
 
 // feeReference returns a special unique reference for the fee paid on a
@@ -205,8 +209,39 @@ func closedChannelEntries(channel lndclient.ClosedChannel,
 	return []*HarmonyEntry{closeEntry, feeEntry}, nil
 }
 
+func sweepEntries(tx lndclient.Transaction, getFees getFeeFunc,
+	convert usdPrice) ([]*HarmonyEntry, error) {
+
+	if tx.Fee != 0 {
+		return nil, ErrSweepFee
+	}
+
+	txEntry, err := newHarmonyEntry(
+		tx.Timestamp, satsToMsat(tx.Amount), EntryTypeSweep, tx.TxHash,
+		tx.TxHash, tx.Label, true, convert,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	fee, err := getFees(tx.Tx.TxHash())
+	if err != nil {
+		return nil, err
+	}
+
+	feeEntry, err := newHarmonyEntry(
+		tx.Timestamp, invertedSatsToMsats(fee), EntryTypeSweepFee,
+		tx.TxHash, feeReference(tx.TxHash), "", true, convert,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*HarmonyEntry{txEntry, feeEntry}, nil
+}
+
 // onChainEntries produces relevant entries for an on chain transaction.
-func onChainEntries(tx lndclient.Transaction, isSweep bool,
+func onChainEntries(tx lndclient.Transaction,
 	convert usdPrice) ([]*HarmonyEntry, error) {
 
 	var (
@@ -219,10 +254,6 @@ func onChainEntries(tx lndclient.Transaction, isSweep bool,
 	// set our fee as well, otherwise we set type based on the amount of the
 	// transaction.
 	switch {
-	case isSweep:
-		entryType = EntryTypeSweep
-		feeType = EntryTypeSweepFee
-
 	case amtMsat < 0:
 		entryType = EntryTypePayment
 

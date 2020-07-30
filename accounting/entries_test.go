@@ -82,6 +82,7 @@ var (
 		Amount:    onChainAmtSat,
 		Timestamp: onChainTimestamp,
 		Fee:       onChainFeeSat,
+		Tx:        &wire.MsgTx{},
 	}
 
 	paymentRequest = "lnbcrt10n1p0t6nmypp547evsfyrakg0nmyw59ud9cegkt99yccn5nnp4suq3ac4qyzzgevsdqqcqzpgsp54hvffpajcyddm20k3ptu53930425hpnv8m06nh5jrd6qhq53anrq9qy9qsqphhzyenspf7kfwvm3wyu04fa8cjkmvndyexlnrmh52huwa4tntppjmak703gfln76rvswmsx2cz3utsypzfx40dltesy8nj64ttgemgqtwfnj9"
@@ -407,11 +408,78 @@ func TestChannelCloseEntry(t *testing.T) {
 	}
 }
 
+// TestSweepEntry tests creation of sweep entries that calculate their fees
+// separately to the transaction that lnd provided.
+func TestSweepEntry(t *testing.T) {
+	amt := satsToMsat(onChainAmtSat)
+	amtMsat := lnwire.MilliSatoshi(amt)
+
+	entries := []*HarmonyEntry{
+		{
+			Timestamp: onChainTimestamp,
+			Amount:    amtMsat,
+			FiatValue: fiat.MsatToUSD(mockBTCPrice.Price, amtMsat),
+			TxID:      onChainTxID,
+			Reference: onChainTxID,
+			Note:      "",
+			Type:      EntryTypeSweep,
+			OnChain:   true,
+			Credit:    true,
+			BTCPrice:  mockBTCPrice,
+		},
+		{
+			Timestamp: onChainTimestamp,
+			Amount:    mockFeeMsat,
+			FiatValue: fiat.MsatToUSD(mockBTCPrice.Price, mockFeeMsat),
+			TxID:      onChainTxID,
+			Reference: feeReference(onChainTxID),
+			Note:      "",
+			Type:      EntryTypeSweepFee,
+			OnChain:   true,
+			Credit:    false,
+			BTCPrice:  mockBTCPrice,
+		},
+	}
+
+	tests := []struct {
+		name    string
+		err     error
+		fee     btcutil.Amount
+		entries []*HarmonyEntry
+	}{
+		{
+			name:    "fee not set in tx",
+			fee:     0,
+			entries: entries,
+			err:     nil,
+		},
+		{
+			name:    "non-zero tx",
+			fee:     1,
+			entries: nil,
+			err:     ErrSweepFee,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			sweep := onChainTx
+			sweep.Fee = test.fee
+
+			entries, err := sweepEntries(sweep, mockFee, mockPrice)
+			require.Equal(t, test.err, err)
+			require.Equal(t, test.entries, entries)
+		})
+	}
+}
+
 // TestOnChainEntry tests creation of entries for receipts and payments, and the
 // generation of a fee entry where applicable.
 func TestOnChainEntry(t *testing.T) {
-	getOnChainEntry := func(isReceive, isSweep,
-		hasFee bool, label string) []*HarmonyEntry {
+	getOnChainEntry := func(isReceive, hasFee bool,
+		label string) []*HarmonyEntry {
 
 		var (
 			entryType = EntryTypePayment
@@ -420,11 +488,6 @@ func TestOnChainEntry(t *testing.T) {
 
 		if isReceive {
 			entryType = EntryTypeReceipt
-		}
-
-		if isSweep {
-			entryType = EntryTypeSweep
-			feeType = EntryTypeSweepFee
 		}
 
 		amt := satsToMsat(onChainAmtSat)
@@ -472,10 +535,6 @@ func TestOnChainEntry(t *testing.T) {
 		// Whether the transaction paid us, or was our payment.
 		isReceive bool
 
-		// isSweep returns true if the transaction should be identified
-		// as a sweep by lnd.
-		isSweep bool
-
 		// Whether the transaction has a fee attached.
 		hasFee bool
 
@@ -486,31 +545,21 @@ func TestOnChainEntry(t *testing.T) {
 			name:      "receive with fee",
 			isReceive: true,
 			hasFee:    true,
-			isSweep:   false,
 		},
 		{
 			name:      "receive without fee",
 			isReceive: true,
 			hasFee:    false,
-			isSweep:   false,
 		},
 		{
 			name:      "payment without fee",
 			isReceive: true,
 			hasFee:    false,
-			isSweep:   false,
 		},
 		{
 			name:      "payment with fee",
 			isReceive: true,
 			hasFee:    true,
-			isSweep:   false,
-		},
-		{
-			name:      "sweep with fee",
-			isReceive: true,
-			hasFee:    true,
-			isSweep:   true,
 		},
 	}
 
@@ -537,16 +586,13 @@ func TestOnChainEntry(t *testing.T) {
 			// Set the label as per the test.
 			chainTx.Label = test.txLabel
 
-			entries, err := onChainEntries(
-				chainTx, test.isSweep, mockPrice,
-			)
+			entries, err := onChainEntries(chainTx, mockPrice)
 			require.NoError(t, err)
 
 			// Create the entries we expect based on the test
 			// params.
 			expected := getOnChainEntry(
-				test.isReceive, test.isSweep, test.hasFee,
-				test.txLabel,
+				test.isReceive, test.hasFee, test.txLabel,
 			)
 
 			require.Equal(t, expected, entries)
