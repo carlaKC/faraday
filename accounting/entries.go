@@ -50,53 +50,41 @@ func channelOpenNote(initiator bool, remotePubkey string,
 }
 
 // channelOpenFeeNote creates a note for channel open types.
-func channelOpenFeeNote(channelID uint64) string {
+func channelOpenFeeNote(channelID lnwire.ShortChannelID) string {
 	return fmt.Sprintf("fees to open channel: %v", channelID)
 }
 
 // channelOpenEntries produces the relevant set of entries for a currently open
 // channel.
-func channelOpenEntries(channel lndclient.ChannelInfo, tx lndclient.Transaction,
+func channelOpenEntries(channel channelInfo, tx lndclient.Transaction,
 	convert usdPrice) ([]*HarmonyEntry, error) {
 
 	var (
-		amtMsat   = satsToMsat(tx.Amount)
-		entryType = EntryTypeLocalChannelOpen
+		amtMsat   int64
+		entryType EntryType
+		initiator bool
 	)
 
-	if !channel.Initiator {
+	// For open channels, we always expect to know the initiating channel.
+	switch channel.initiator {
+	case lndclient.InitiatorLocal:
+		amtMsat = satsToMsat(tx.Amount)
+		entryType = EntryTypeLocalChannelOpen
+		initiator = true
+
+	case lndclient.InitiatorRemote:
 		amtMsat = 0
 		entryType = EntryTypeRemoteChannelOpen
+
+	default:
+		return nil, fmt.Errorf("open channel with unknown initiator: "+
+			"%v", channel.initiator)
 	}
 
 	return openEntries(
-		tx, convert, amtMsat, channel.Capacity, entryType,
-		channel.PubKeyBytes.String(), channel.ChannelID,
-		channel.Initiator,
-	)
-}
-
-// openChannelFromCloseSummary returns entries for a channel that was opened
-// and closed within the period we are reporting on. Since the channel has
-// already been closed, we need to produce channel opening records from the
-// close summary.
-func openChannelFromCloseSummary(channel lndclient.ClosedChannel,
-	tx lndclient.Transaction, convert usdPrice) ([]*HarmonyEntry, error) {
-
-	// If the transaction has a negative amount, we can infer that this
-	// transaction was a local channel open, because a remote party opening
-	// a channel to us does not affect our balance.
-	amtMsat := satsToMsat(tx.Amount)
-	initiator := amtMsat < 0
-
-	entryType := EntryTypeLocalChannelOpen
-	if !initiator {
-		entryType = EntryTypeRemoteChannelOpen
-	}
-
-	return openEntries(
-		tx, convert, amtMsat, channel.Capacity, entryType,
-		channel.PubKeyBytes.String(), channel.ChannelID, initiator,
+		tx, convert, amtMsat, channel.capacity, entryType,
+		channel.pubKeyBytes.String(), channel.channelID,
+		initiator,
 	)
 }
 
@@ -106,7 +94,8 @@ func openChannelFromCloseSummary(channel lndclient.ClosedChannel,
 // lnrpc.ChannelCloseSummary.
 func openEntries(tx lndclient.Transaction, convert usdPrice, amtMsat int64,
 	capacity btcutil.Amount, entryType EntryType, remote string,
-	channelID uint64, initiator bool) ([]*HarmonyEntry, error) {
+	channelID lnwire.ShortChannelID,
+	initiator bool) ([]*HarmonyEntry, error) {
 
 	ref := fmt.Sprintf("%v", channelID)
 	note := channelOpenNote(initiator, remote, capacity)
@@ -144,7 +133,9 @@ func openEntries(tx lndclient.Transaction, convert usdPrice, amtMsat int64,
 }
 
 // channelCloseNote creates a close note for a channel close entry type.
-func channelCloseNote(channelID uint64, closeType, initiated string) string {
+func channelCloseNote(channelID lnwire.ShortChannelID, closeType,
+	initiated string) string {
+
 	return fmt.Sprintf("close channel: %v close type: %v closed by: %v",
 		channelID, closeType, initiated)
 }
@@ -154,26 +145,26 @@ func channelCloseNote(channelID uint64, closeType, initiated string) string {
 // in the close transaction. It *does not* include any on chain resolutions, so
 // it is excluding htlcs that are resolved on chain, and will not reflect our
 // balance when we force close (because it is behind a timelock).
-func closedChannelEntries(channel lndclient.ClosedChannel,
+func closedChannelEntries(channel closedChannelInfo,
 	tx lndclient.Transaction, getFee getFeeFunc,
 	convert usdPrice) ([]*HarmonyEntry, error) {
 
 	amtMsat := satsToMsat(tx.Amount)
 	note := channelCloseNote(
-		channel.ChannelID, channel.CloseType.String(),
-		channel.CloseInitiator.String(),
+		channel.channelID, channel.closeType.String(),
+		channel.closeInitiator.String(),
 	)
 
 	closeEntry, err := newHarmonyEntry(
 		tx.Timestamp, amtMsat, EntryTypeChannelClose,
-		channel.ClosingTxHash, channel.ClosingTxHash, note, true,
+		tx.TxHash, tx.TxHash, note, true,
 		convert,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	switch channel.OpenInitiator {
+	switch channel.initiator {
 	// If the remote party opened the channel, we can just return the
 	// channel close as is, because we did not pay fees for it.
 	case lndclient.InitiatorRemote:
@@ -184,6 +175,7 @@ func closedChannelEntries(channel lndclient.ClosedChannel,
 	case lndclient.InitiatorLocal:
 
 	// If we do not know who opened the channel, we fail.
+	// TODO(carla): this could happen for pending channels??
 	default:
 		return nil, ErrUnknownInitiator
 	}
@@ -198,9 +190,8 @@ func closedChannelEntries(channel lndclient.ClosedChannel,
 	feeAmt := invertedSatsToMsats(fees)
 
 	feeEntry, err := newHarmonyEntry(
-		tx.Timestamp, feeAmt, EntryTypeChannelCloseFee,
-		channel.ClosingTxHash, feeReference(channel.ClosingTxHash), "",
-		true, convert,
+		tx.Timestamp, feeAmt, EntryTypeChannelCloseFee, tx.TxHash,
+		feeReference(tx.TxHash), "", true, convert,
 	)
 	if err != nil {
 		return nil, err
