@@ -95,7 +95,8 @@ func TestFilterOnChain(t *testing.T) {
 	unfiltered := []lndclient.Transaction{
 		confirmedTx, noConfTx, confirmedTxOutOfRange,
 	}
-	filtered := filterOnChain(start, end, unfiltered)
+	filtered, err := filterOnChain(start, end, unfiltered)
+	require.NoError(t, err)
 
 	// We only expect our confirmed transaction in the time range we
 	// specified to be included.
