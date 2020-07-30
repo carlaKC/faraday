@@ -8,7 +8,7 @@ function waitnoerror() {
 
 function start_bitcoind() {
         echo "Starting bitcoind"
-        bitcoind -regtest -txindex -rpcuser=devuser -rpcpassword=devpass \
+        bitcoind -regtest -txindex=1 -rpcuser=devuser -rpcpassword=devpass \
         -zmqpubrawblock=tcp://0.0.0.0:29332 -zmqpubrawtx=tcp://0.0.0.0:29333 &
 
         BTCD_PID=$!
@@ -23,7 +23,7 @@ function start_lnds() {
         echo "Starting lnd"
         lnd --bitcoin.active --bitcoin.node=bitcoind --bitcoin.regtest --bitcoind.rpcuser=devuser \
         --bitcoind.zmqpubrawblock=tcp://localhost:29332 --bitcoind.zmqpubrawtx=tcp://localhost:29333 \
-        --bitcoind.rpcpass=devpass --noseedbackup --nobootstrap --lnddir=lnd-alice \
+        --bitcoind.rpcpass=devpass --noseedbackup --nobootstrap --lnddir=lnd-alice --accept-keysend \
         -d trace | awk '{ print "[lnd-alice] " $0; }' &
 
         LND_SERVER_PID=$!
@@ -31,7 +31,7 @@ function start_lnds() {
         lnd --bitcoin.active --bitcoin.node=bitcoind --bitcoin.regtest --bitcoind.rpcuser=devuser \
         --bitcoind.rpcpass=devpass --noseedbackup --nobootstrap  --rpclisten=localhost:10002 \
         --bitcoind.zmqpubrawblock=tcp://localhost:29332 --bitcoind.zmqpubrawtx=tcp://localhost:29333 \
-        --listen=localhost:10012 --restlisten=localhost:8002 \
+        --listen=localhost:10012 --restlisten=localhost:8002 --accept-keysend\
         --lnddir=lnd-bob | awk '{ print "[lnd-bob] " $0; }' &
 
         LND_CLIENT_PID=$!
