@@ -28,10 +28,10 @@ var (
 	ErrSweepFee = errors.New("expected zero fee for sweep")
 )
 
-// feeReference returns a special unique reference for the fee paid on a
+// FeeReference returns a special unique reference for the fee paid on a
 // transaction. We use the reference of the original entry with :-1 to denote
 // that this entry is associated with the original entry.
-func feeReference(reference string) string {
+func FeeReference(reference string) string {
 	return fmt.Sprintf("%v:-1", reference)
 }
 
@@ -123,7 +123,7 @@ func openEntries(tx lndclient.Transaction, convert usdPrice, amtMsat int64,
 	note = channelOpenFeeNote(channelID)
 	feeEntry, err := newHarmonyEntry(
 		tx.Timestamp, feeMsat, EntryTypeChannelOpenFee,
-		tx.TxHash, feeReference(tx.TxHash), note, true, convert,
+		tx.TxHash, FeeReference(tx.TxHash), note, true, convert,
 	)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func closedChannelEntries(channel closedChannelInfo,
 
 	feeEntry, err := newHarmonyEntry(
 		tx.Timestamp, feeAmt, EntryTypeChannelCloseFee, tx.TxHash,
-		feeReference(tx.TxHash), "", true, convert,
+		FeeReference(tx.TxHash), "", true, convert,
 	)
 	if err != nil {
 		return nil, err
@@ -222,7 +222,7 @@ func sweepEntries(tx lndclient.Transaction, getFees getFeeFunc,
 
 	feeEntry, err := newHarmonyEntry(
 		tx.Timestamp, invertedSatsToMsats(fee), EntryTypeSweepFee,
-		tx.TxHash, feeReference(tx.TxHash), "", true, convert,
+		tx.TxHash, FeeReference(tx.TxHash), "", true, convert,
 	)
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func onChainEntries(tx lndclient.Transaction,
 
 	feeEntry, err := newHarmonyEntry(
 		tx.Timestamp, feeAmt, feeType, tx.TxHash,
-		feeReference(tx.TxHash), "", true, convert,
+		FeeReference(tx.TxHash), "", true, convert,
 	)
 	if err != nil {
 		return nil, err
@@ -390,7 +390,7 @@ func paymentEntry(payment paymentInfo, paidToSelf bool,
 		return []*HarmonyEntry{paymentEntry}, nil
 	}
 
-	feeRef := feeReference(ref)
+	feeRef := FeeReference(ref)
 	feeAmt := invertMsat(int64(payment.Fee))
 
 	feeEntry, err := newHarmonyEntry(
