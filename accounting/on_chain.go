@@ -41,6 +41,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		openedChannels: make(map[string]channelInfo),
 		sweeps:         make(map[string]bool),
 		closedChannels: make(map[string]closedChannelInfo),
+		feeFunc:        cfg.GetFee,
 	}
 
 	onChainTxns, err := cfg.OnChainTransactions()
@@ -70,7 +71,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 	for _, c := range pending.PendingForceClose {
 		inf := newChannelInfo(
 			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
-			c.PubKeyBytes, c.Capacity,
+			c.PubKeyBytes, c.Capacity, c.ChannelInitiator,
 		)
 
 		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
@@ -86,7 +87,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 	for _, c := range pending.WaitingClose {
 		inf := newChannelInfo(
 			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
-			c.PubKeyBytes, c.Capacity,
+			c.PubKeyBytes, c.Capacity, c.ChannelInitiator,
 		)
 
 		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
@@ -107,7 +108,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 	for _, c := range pending.PendingOpen {
 		inf := newChannelInfo(
 			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
-			c.PubKeyBytes, c.Capacity,
+			c.PubKeyBytes, c.Capacity, c.ChannelInitiator,
 		)
 
 		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
@@ -129,9 +130,14 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 			return nil, err
 		}
 
+		init := lndclient.InitiatorLocal
+		if !channel.Initiator {
+			init = lndclient.InitiatorRemote
+		}
+
 		inf := newChannelInfo(
 			lnwire.NewShortChanIDFromInt(channel.ChannelID),
-			outpoint, channel.PubKeyBytes, channel.Capacity,
+			outpoint, channel.PubKeyBytes, channel.Capacity, init,
 		)
 
 		// Add the channel to our map, keyed by txid.
@@ -160,6 +166,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		inf := newChannelInfo(
 			lnwire.NewShortChanIDFromInt(closed.ChannelID),
 			outpoint, closed.PubKeyBytes, closed.Capacity,
+			closed.OpenInitiator,
 		)
 
 		info.openedChannels[outpoint.Hash.String()] = inf
@@ -190,6 +197,7 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 type onChainInformation struct {
 	txns           []lndclient.Transaction
 	priceFunc      usdPrice
+	feeFunc        getFeeFunc
 	sweeps         map[string]bool
 	openedChannels map[string]channelInfo
 	closedChannels map[string]closedChannelInfo
@@ -200,6 +208,7 @@ type channelInfo struct {
 	channelPoint *wire.OutPoint
 	capacity     btcutil.Amount
 	pubKeyBytes  route.Vertex
+	initiator    lndclient.Initiator
 	channelID    lnwire.ShortChannelID
 }
 
@@ -211,13 +220,15 @@ type closedChannelInfo struct {
 }
 
 func newChannelInfo(id lnwire.ShortChannelID, chanPoint *wire.OutPoint,
-	pubkey route.Vertex, capacity btcutil.Amount) channelInfo {
+	pubkey route.Vertex, capacity btcutil.Amount,
+	initiator lndclient.Initiator) channelInfo {
 
 	return channelInfo{
 		channelID:    id,
 		channelPoint: chanPoint,
 		pubKeyBytes:  pubkey,
 		capacity:     capacity,
+		initiator:    initiator,
 	}
 }
 
@@ -248,7 +259,7 @@ func onChainReport(info onChainInformation) (
 		channelClose, ok := info.closedChannels[txn.TxHash]
 		if ok {
 			entries, err := closedChannelEntries(
-				channelClose, txn, info.priceFunc,
+				channelClose, txn, info.feeFunc, info.priceFunc,
 			)
 			if err != nil {
 				return nil, err
