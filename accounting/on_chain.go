@@ -3,8 +3,12 @@ package accounting
 import (
 	"context"
 
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcutil"
 	"github.com/lightninglabs/faraday/utils"
 	"github.com/lightninglabs/lndclient"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // OnChainReport produces a report of our on chain activity for a period using
@@ -30,6 +34,15 @@ func OnChainReport(ctx context.Context, cfg *OnChainConfig) (Report, error) {
 // the actual price API.
 func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 	error) {
+
+	// Create an info struct to hold all the elements we need.
+	info := onChainInformation{
+		priceFunc:      getPrice,
+		openedChannels: make(map[string]channelInfo),
+		sweeps:         make(map[string]bool),
+		closedChannels: make(map[string]closedChannelInfo),
+	}
+
 	onChainTxns, err := cfg.OnChainTransactions()
 	if err != nil {
 		return nil, err
@@ -37,9 +50,67 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 
 	// Filter our on chain transactions by start and end time. If we have
 	// no on chain transactions over this period, we can return early.
-	filtered := filterOnChain(cfg.StartTime, cfg.EndTime, onChainTxns)
-	if len(filtered) == 0 {
+	info.txns = filterOnChain(cfg.StartTime, cfg.EndTime, onChainTxns)
+	if len(info.txns) == 0 {
 		return Report{}, nil
+	}
+
+	// Get our pending channels so that we do not miss channel transactions
+	// that may have confirmed on chain, but are still considered pending
+	// by lnd (this is the case for channel opens that require more than one
+	// conf, or closing channels that are awaiting resolution).
+	pending, err := cfg.PendingChannels()
+	if err != nil {
+		return nil, err
+	}
+
+	// We add our pending force close channels to opened and closed channels
+	// because it is possible that our channel was opened and closed in the
+	// our relevant period.
+	for _, c := range pending.PendingForceClose {
+		inf := newChannelInfo(
+			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
+			c.PubKeyBytes, c.Capacity,
+		)
+
+		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
+		info.closedChannels[c.CloseTxid.String()] = closedChannelInfo{
+			channelInfo:    inf,
+			closeType:      "force close",
+			closeInitiator: "unknown for pending channels",
+		}
+	}
+
+	// Add our channel open and all possible channel closes to our info set.
+	// We add all potential close txids in case one of them has confirmed.
+	for _, c := range pending.WaitingClose {
+		inf := newChannelInfo(
+			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
+			c.PubKeyBytes, c.Capacity,
+		)
+
+		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
+
+		closed := closedChannelInfo{
+			channelInfo:    inf,
+			closeType:      lndclient.CloseTypeCooperative.String(),
+			closeInitiator: lndclient.InitiatorUnrecorded.String(),
+		}
+		info.closedChannels[c.LocalTxid.String()] = closed
+		info.closedChannels[c.RemoteTxid.String()] = closed
+		info.closedChannels[c.RemotePending.String()] = closed
+	}
+
+	// Add our pending open channel to our set of open channels to cover
+	// the case where our transaction has confirmed on chain but has not
+	// yet reached the confirmations lnd requires.
+	for _, c := range pending.PendingOpen {
+		inf := newChannelInfo(
+			lnwire.NewShortChanIDFromInt(0), c.ChannelPoint,
+			c.PubKeyBytes, c.Capacity,
+		)
+
+		info.openedChannels[c.ChannelPoint.Hash.String()] = inf
 	}
 
 	// Get our opened channels and create a map of closing txid to the
@@ -50,7 +121,6 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		return nil, err
 	}
 
-	openChannels := make(map[string]lndclient.ChannelInfo)
 	for _, channel := range openRPCChannels {
 		outpoint, err := utils.GetOutPointFromString(
 			channel.ChannelPoint,
@@ -59,8 +129,13 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 			return nil, err
 		}
 
+		inf := newChannelInfo(
+			lnwire.NewShortChanIDFromInt(channel.ChannelID),
+			outpoint, channel.PubKeyBytes, channel.Capacity,
+		)
+
 		// Add the channel to our map, keyed by txid.
-		openChannels[outpoint.Hash.String()] = channel
+		info.openedChannels[outpoint.Hash.String()] = inf
 	}
 
 	// Get our closed channels and create a map of closing txid to closed
@@ -71,23 +146,29 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		return nil, err
 	}
 
-	// We create two maps here, one keyed by the close transaction ids for
-	// our already closed channels, and another keyed by their channel point.
-	// We do this so that we can also match the on chain open transaction
-	// for channels that are already closed.
-	channelCloses := make(map[string]lndclient.ClosedChannel)
-	channelOpens := make(map[string]lndclient.ClosedChannel)
-
-	for _, closedChannel := range closedRPCChannels {
-		channelCloses[closedChannel.ClosingTxHash] = closedChannel
-
+	// Add our already closed channels open and closed transactions to our
+	// on chain info so that we will be able to detect channels that were
+	// opened and closed within our period.
+	for _, closed := range closedRPCChannels {
 		outpoint, err := utils.GetOutPointFromString(
-			closedChannel.ChannelPoint,
+			closed.ChannelPoint,
 		)
 		if err != nil {
 			return nil, err
 		}
-		channelOpens[outpoint.Hash.String()] = closedChannel
+
+		inf := newChannelInfo(
+			lnwire.NewShortChanIDFromInt(closed.ChannelID),
+			outpoint, closed.PubKeyBytes, closed.Capacity,
+		)
+
+		info.openedChannels[outpoint.Hash.String()] = inf
+
+		info.closedChannels[closed.ClosingTxHash] = closedChannelInfo{
+			channelInfo:    inf,
+			closeType:      closed.CloseType.String(),
+			closeInitiator: closed.CloseInitiator.String(),
+		}
 	}
 
 	// Finally, get our list of known sweeps from lnd so that we can
@@ -102,48 +183,59 @@ func onChainReportWithPrices(cfg *OnChainConfig, getPrice usdPrice) (Report,
 		isSweep[sweep] = true
 	}
 
-	return onChainReport(
-		filtered, getPrice, openChannels, isSweep, channelOpens,
-		channelCloses,
-	)
+	return onChainReport(info)
+}
+
+// onChainInformation contains all the information we require to produce an
+// on chain report.
+type onChainInformation struct {
+	txns           []lndclient.Transaction
+	priceFunc      usdPrice
+	sweeps         map[string]bool
+	openedChannels map[string]channelInfo
+	closedChannels map[string]closedChannelInfo
+}
+
+// channelInfo contains information that is common to open and closed channels.
+type channelInfo struct {
+	channelPoint *wire.OutPoint
+	capacity     btcutil.Amount
+	pubKeyBytes  route.Vertex
+	channelID    lnwire.ShortChannelID
+}
+
+// closedChannelInfo contains channel information which has further close info.
+type closedChannelInfo struct {
+	channelInfo
+	closeType      string
+	closeInitiator string
+}
+
+func newChannelInfo(id lnwire.ShortChannelID, chanPoint *wire.OutPoint,
+	pubkey route.Vertex, capacity btcutil.Amount) channelInfo {
+
+	return channelInfo{
+		channelID:    id,
+		channelPoint: chanPoint,
+		pubKeyBytes:  pubkey,
+		capacity:     capacity,
+	}
 }
 
 // onChainReport produces an on chain transaction report.
-func onChainReport(txns []lndclient.Transaction, priceFunc usdPrice,
-	currentlyOpenChannels map[string]lndclient.ChannelInfo,
-	sweeps map[string]bool, channelOpenTransactions,
-	channelCloseTransactions map[string]lndclient.ClosedChannel) (
+func onChainReport(info onChainInformation) (
 	Report, error) {
-
-	txMap := make(map[string]lndclient.Transaction, len(txns))
-	for _, tx := range txns {
-		txMap[tx.TxHash] = tx
-	}
 
 	var report Report
 
-	for _, txn := range txns {
-		// If the transaction is in our set of currently open channels,
-		// we just need an open channel entry for it.
-		openChannel, ok := currentlyOpenChannels[txn.TxHash]
+	for _, txn := range info.txns {
+		// If the transaction is a channel open. The channel may be one
+		// of our currently open channels, or a channel open for a
+		// channel that has already been closed.
+		openChannel, ok := info.openedChannels[txn.TxHash]
 		if ok {
 			entries, err := channelOpenEntries(
-				openChannel, txn, priceFunc,
-			)
-			if err != nil {
-				return nil, err
-			}
-			report = append(report, entries...)
-			continue
-		}
-
-		// If the transaction is a channel opening transaction for one
-		// of our already closed channels, we need to reconstruct a
-		// channel open from our close summary.
-		channelOpen, ok := channelOpenTransactions[txn.TxHash]
-		if ok {
-			entries, err := openChannelFromCloseSummary(
-				channelOpen, txn, priceFunc,
+				openChannel, txn, info.priceFunc,
 			)
 			if err != nil {
 				return nil, err
@@ -153,12 +245,11 @@ func onChainReport(txns []lndclient.Transaction, priceFunc usdPrice,
 			continue
 		}
 
-		// If the transaction is a channel close, we create channel
-		// close records from our close summary.
-		channelClose, ok := channelCloseTransactions[txn.TxHash]
+		// Check whether the transaction is a channel close.
+		channelClose, ok := info.closedChannels[txn.TxHash]
 		if ok {
 			entries, err := closedChannelEntries(
-				channelClose, txn, priceFunc,
+				channelClose, txn, info.priceFunc,
 			)
 			if err != nil {
 				return nil, err
@@ -172,9 +263,9 @@ func onChainReport(txns []lndclient.Transaction, priceFunc usdPrice,
 		// closes, we create a generic on chain entry for it. We check
 		// our list of known sweeps for this tx so that we can separate
 		// it our from regular chain sends.
-		isSweep := sweeps[txn.TxHash]
+		isSweep := info.sweeps[txn.TxHash]
 
-		entries, err := onChainEntries(txn, isSweep, priceFunc)
+		entries, err := onChainEntries(txn, isSweep, info.priceFunc)
 		if err != nil {
 			return nil, err
 		}
