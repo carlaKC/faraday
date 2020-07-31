@@ -269,13 +269,24 @@ func onChainReport(info onChainInformation) (
 			continue
 		}
 
-		// Finally, if the transaction is unrelated to channel opens or
-		// closes, we create a generic on chain entry for it. We check
-		// our list of known sweeps for this tx so that we can separate
-		// it our from regular chain sends.
-		isSweep := info.sweeps[txn.TxHash]
+		// Next, we check whether our transaction is a sweep. In this
+		// case we also expect to have zero fees, because sweeps use
+		// their existing inputs for fees.
+		if info.sweeps[txn.TxHash] {
+			entries, err := sweepEntries(
+				txn, info.feeFunc, info.priceFunc,
+			)
+			if err != nil {
+				return nil, err
+			}
 
-		entries, err := onChainEntries(txn, isSweep, info.priceFunc)
+			report = append(report, entries...)
+			continue
+		}
+
+		// Finally, if the transaction is unrelated to channel opens or
+		// closes, we create a generic on chain entry for it.
+		entries, err := onChainEntries(txn, info.priceFunc)
 		if err != nil {
 			return nil, err
 		}
