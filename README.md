@@ -33,7 +33,7 @@ Faraday connects to a single instance of lnd. It requires access to macaroons fo
 ./faraday                                    \
 --macaroondir={directory containing macaroon}   \
 --tlscertpath={path to lnd cert}                \
---rpserver={host:port of lnd's rpserver} 
+--rpcserver={host:port of lnd's rpcserver} 
 ```
 
 By default, faraday runs on mainnet. The `--testnet`, `--simnet` or `--regtest` flags can be used to run in test environments.
