@@ -81,8 +81,8 @@ func ListPayments(ctx context.Context, startOffset, maxPayments uint64,
 }
 
 // ListForwards makes paginated calls to our forwarding events api.
-func ListForwards(ctx context.Context, maxForwards uint64, startTime,
-	endTime time.Time, lnd lndclient.LightningClient) (
+func ListForwards(ctx context.Context, startOffset, maxForwards uint64,
+	startTime, endTime time.Time, lnd lndclient.LightningClient) (
 	[]lndclient.ForwardingEvent, error) {
 
 	var forwards []lndclient.ForwardingEvent
@@ -109,7 +109,7 @@ func ListForwards(ctx context.Context, maxForwards uint64, startTime,
 	// Make paginated calls to the forwards API, starting at offset 0 and
 	// querying our max number of payments each time.
 	if err := paginater.QueryPaginated(
-		ctx, query, 0, maxForwards,
+		ctx, query, startOffset, maxForwards,
 	); err != nil {
 		return nil, err
 	}

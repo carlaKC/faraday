@@ -39,7 +39,7 @@ func getRevenueConfig(ctx context.Context, cfg *Config,
 		},
 		ForwardingHistory: func() ([]lndclient.ForwardingEvent, error) {
 			return lndwrap.ListForwards(
-				ctx, uint64(maxForwardQueries), start, end,
+				ctx, 0, uint64(maxForwardQueries), start, end,
 				cfg.Lnd.Client,
 			)
 		},

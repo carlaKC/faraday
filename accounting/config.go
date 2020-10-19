@@ -154,7 +154,7 @@ func NewOffChainConfig(ctx context.Context, lnd lndclient.LndServices,
 		},
 		ListForwards: func() ([]lndclient.ForwardingEvent, error) {
 			return lndwrap.ListForwards(
-				ctx, maxForwards, startTime, endTime,
+				ctx, 0, maxForwards, startTime, endTime,
 				lnd.Client,
 			)
 		},
